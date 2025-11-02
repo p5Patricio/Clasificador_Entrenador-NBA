@@ -503,9 +503,20 @@ export default function PlayerPage() {
               <p>No se detectaron áreas débiles destacadas.</p>
             ) : (
               <ul className="list-inside list-disc space-y-1">
-                {data.weak_areas.map((w, i) => (
-                  <li key={i}>{w}</li>
-                ))}
+                {data.weak_areas.map((w, i) => {
+                  // Reemplaza el código de estadística por el nombre en español
+                  const statCodeMatch = w.match(/^(\w+):/);
+                  let label = null;
+                  if (statCodeMatch) {
+                    const code = statCodeMatch[1];
+                    label = STAT_LABELS[code] || code;
+                  }
+                  // Reemplaza solo la primera ocurrencia, si statCodeMatch existe
+                  const display = label && statCodeMatch && statCodeMatch[0]
+                    ? w.replace(statCodeMatch[0], `${label}:`)
+                    : w;
+                  return <li key={i}>{display}</li>;
+                })}
               </ul>
             )}
           </section>
