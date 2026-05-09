@@ -1,6 +1,6 @@
 import pandas as pd
 from nba_api.stats.static import teams
-from .nba_data_processor import load_and_preprocess_data, scale_data, perform_kmeans_clustering, analyze_clusters
+from nba_data_processor import load_and_preprocess_data, scale_data, perform_kmeans_clustering, analyze_clusters
 import os
 import matplotlib.pyplot as plt
 import numpy as np

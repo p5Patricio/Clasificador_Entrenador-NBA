@@ -1,0 +1,27 @@
+﻿.atl/
+# Python
+__pycache__/
+*.py[cod]
+*.class
+*.so
+.venv/
+venv/
+env/
+ENV/
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Agent Teams Lite
+.atl/
