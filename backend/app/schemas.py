@@ -165,5 +165,16 @@ class HealthResponse(BaseModel):
 
 class DataUpdateResponse(BaseModel):
     season: str
-    players_upserted: int
+    file: Optional[str] = None
+    rows_processed: int = 0
+    players_inserted: int = 0
+    players_updated: int = 0
+    players_failed: int = 0
     etl_status: str
+
+
+class DataUpdateRequest(BaseModel):
+    season: str
+    season_type: str = "Regular Season"
+    min_minutes: int = 100
+    filepath: Optional[str] = None

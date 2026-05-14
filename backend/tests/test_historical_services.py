@@ -106,6 +106,17 @@ def _service(db_session: Session) -> HistoricalService:
     )
 
 
+class DictCache:
+    def __init__(self):
+        self.values = {}
+
+    def get_json(self, key):
+        return self.values.get(key)
+
+    def set_json(self, key, value, ttl_seconds=None):
+        self.values[key] = value
+
+
 def test_historical_service_returns_player_game_logs(db_session: Session):
     player, _, season = _seed_service_data(db_session, base_id=501)
 
@@ -115,6 +126,33 @@ def test_historical_service_returns_player_game_logs(db_session: Session):
     assert response.season_id == season.id
     assert response.games[0].game_id == "SVC-GAME-501"
     assert response.games[0].pts == 28
+
+
+def test_historical_service_reuses_cached_game_logs(db_session: Session):
+    player, _, season = _seed_service_data(db_session, base_id=511)
+    cache = DictCache()
+    service = HistoricalService(
+        player_repo=PlayerRepository(db_session),
+        team_repo=TeamRepository(db_session),
+        historical_repo=HistoricalRepository(db_session),
+        cache=cache,
+    )
+
+    first = service.get_player_game_logs(player.full_name, season.id)
+    db_session.add(
+        PlayerGameLog(
+            player_id=511,
+            team_id=511,
+            season_id=511,
+            game_id="SVC-GAME-511-B",
+            pts=99,
+        )
+    )
+    db_session.commit()
+    second = service.get_player_game_logs(player.full_name, season.id)
+
+    assert [game.game_id for game in first.games] == ["SVC-GAME-511"]
+    assert [game.game_id for game in second.games] == ["SVC-GAME-511"]
 
 
 def test_historical_service_returns_player_shots(db_session: Session):

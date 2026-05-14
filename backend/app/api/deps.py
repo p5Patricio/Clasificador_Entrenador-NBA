@@ -10,6 +10,9 @@ from app.services.team import TeamService
 from app.services.clustering import ClusteringService
 from app.services.report import ReportService
 from app.services.historical import HistoricalService
+from app.services.data_update import DataUpdateService
+from app.services.cache import CacheService
+from app.config import settings
 
 
 def get_report_service(session: Session = Depends(get_db_session)) -> ReportService:
@@ -55,5 +58,23 @@ def get_historical_service(
     player_repo: PlayerRepository = Depends(get_player_repo),
     team_repo: TeamRepository = Depends(get_team_repo),
     historical_repo: HistoricalRepository = Depends(get_historical_repo),
+    cache: CacheService = Depends(lambda: get_cache_service()),
 ) -> HistoricalService:
-    return HistoricalService(player_repo, team_repo, historical_repo)
+    return HistoricalService(player_repo, team_repo, historical_repo, cache=cache)
+
+
+def get_cache_service() -> CacheService:
+    try:
+        import redis
+
+        client = redis.Redis.from_url(settings.REDIS_URL)
+        return CacheService(client=client)
+    except Exception:
+        return CacheService(client=None)
+
+
+def get_data_update_service(
+    session: Session = Depends(get_db_session),
+    cache: CacheService = Depends(lambda: get_cache_service()),
+) -> DataUpdateService:
+    return DataUpdateService(session, cache=cache)
