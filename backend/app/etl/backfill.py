@@ -22,6 +22,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from app.deps import get_db_context
 from app.models import Player, Team, Season, PlayerGameLog, PlayerShot
+from app.etl.builders import build_player_advanced_stats_from_row, build_player_shot_from_row
+from app.repositories.historical import HistoricalRepository
 from app.repositories.team import TeamRepository
 
 # nba_api imports
@@ -31,6 +33,7 @@ from nba_api.stats.static import players as static_players
 
 REQUEST_DELAY = 0.6  # seconds between nba_api requests
 BATCH_SIZE = 500
+BASKETBALL_REFERENCE_ADVANCED_URL = "https://www.basketball-reference.com/leagues/NBA_{year}_advanced.html"
 
 
 def _parse_matchup_team_abbr(matchup: str) -> Optional[str]:
@@ -59,6 +62,33 @@ def _resolve_team_id(session: Session, abbr: Optional[str]) -> Optional[int]:
     repo = TeamRepository(session)
     team = repo.get_by_abbreviation(abbr)
     return team.id if team else None
+
+
+def _basketball_reference_season_year(season_label: str) -> int:
+    """Convert NBA season label (2023-24) into Basketball Reference ending year (2024)."""
+    start_year, end_suffix = season_label.split("-")
+    century = int(start_year[:2]) * 100
+    end_year = century + int(end_suffix)
+    if end_year < int(start_year):
+        end_year += 100
+    return end_year
+
+
+def _normalize_advanced_stats_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """Remove repeated Basketball Reference header rows and blank players."""
+    normalized = df.copy()
+    normalized = normalized[normalized["Player"].notna()]
+    normalized = normalized[normalized["Player"] != "Player"]
+    return normalized.reset_index(drop=True)
+
+
+def _fetch_basketball_reference_advanced_stats(season_label: str) -> pd.DataFrame:
+    year = _basketball_reference_season_year(season_label)
+    url = BASKETBALL_REFERENCE_ADVANCED_URL.format(year=year)
+    tables = pd.read_html(url)
+    if not tables:
+        return pd.DataFrame()
+    return _normalize_advanced_stats_dataframe(tables[0])
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
@@ -271,35 +301,7 @@ def backfill_shots(
                                 continue
                             existing_keys.add(key)
 
-                        game_date = None
-                        game_date_raw = row.get("GAME_DATE")
-                        if game_date_raw and pd.notna(game_date_raw):
-                            try:
-                                game_date = datetime.strptime(str(game_date_raw), "%Y-%m-%d").date()
-                            except ValueError:
-                                pass
-
-                        shot = PlayerShot(
-                            player_id=player.id,
-                            season_id=season.id,
-                            game_id=game_id,
-                            game_event_id=game_event_id,
-                            period=int(row.get("PERIOD", 1)) if pd.notna(row.get("PERIOD")) else 1,
-                            minutes_remaining=int(row.get("MINUTES_REMAINING", 0)) if pd.notna(row.get("MINUTES_REMAINING")) else 0,
-                            seconds_remaining=int(row.get("SECONDS_REMAINING", 0)) if pd.notna(row.get("SECONDS_REMAINING")) else 0,
-                            event_type=str(row.get("EVENT_TYPE", "")) if pd.notna(row.get("EVENT_TYPE")) else None,
-                            action_type=str(row.get("ACTION_TYPE", "")) if pd.notna(row.get("ACTION_TYPE")) else None,
-                            shot_type=str(row.get("SHOT_TYPE", "")) if pd.notna(row.get("SHOT_TYPE")) else None,
-                            shot_zone_basic=str(row.get("SHOT_ZONE_BASIC", "")) if pd.notna(row.get("SHOT_ZONE_BASIC")) else None,
-                            shot_zone_area=str(row.get("SHOT_ZONE_AREA", "")) if pd.notna(row.get("SHOT_ZONE_AREA")) else None,
-                            shot_zone_range=str(row.get("SHOT_ZONE_RANGE", "")) if pd.notna(row.get("SHOT_ZONE_RANGE")) else None,
-                            shot_distance=float(row.get("SHOT_DISTANCE", 0)) if pd.notna(row.get("SHOT_DISTANCE")) else 0.0,
-                            loc_x=float(row.get("LOC_X", 0)) if pd.notna(row.get("LOC_X")) else 0.0,
-                            loc_y=float(row.get("LOC_Y", 0)) if pd.notna(row.get("LOC_Y")) else 0.0,
-                            shot_attempted_flag=bool(row.get("SHOT_ATTEMPTED_FLAG", False)) if pd.notna(row.get("SHOT_ATTEMPTED_FLAG")) else False,
-                            shot_made_flag=bool(row.get("SHOT_MADE_FLAG", False)) if pd.notna(row.get("SHOT_MADE_FLAG")) else False,
-                            game_date=game_date,
-                        )
+                        shot = build_player_shot_from_row(row, player_id=player.id, season_id=season.id)
                         batch.append(shot)
 
                         if len(batch) >= BATCH_SIZE:
@@ -324,19 +326,69 @@ def backfill_shots(
         return summary
 
 
+def backfill_advanced_stats(
+    seasons: List[str],
+    limit_players: Optional[int] = None,
+) -> dict:
+    """Backfill Basketball Reference advanced stats for known players."""
+    with get_db_context() as session:
+        repo = HistoricalRepository(session)
+        player_by_name = {player.full_name: player for player in session.exec(select(Player)).all()}
+
+        summary = {
+            "seasons": seasons,
+            "players_processed": 0,
+            "advanced_stats_upserted": 0,
+            "players_skipped": 0,
+            "errors": 0,
+        }
+
+        for season_label in seasons:
+            season = _get_or_create_season(session, season_label)
+            try:
+                df = _fetch_basketball_reference_advanced_stats(season_label)
+            except Exception as e:
+                summary["errors"] += 1
+                print(f"Error fetching advanced stats for {season_label}: {e}")
+                continue
+
+            if limit_players:
+                df = df.head(limit_players)
+
+            for _, row in df.iterrows():
+                player_name = str(row.get("Player", ""))
+                player = player_by_name.get(player_name)
+                if not player:
+                    summary["players_skipped"] += 1
+                    continue
+
+                try:
+                    stats = build_player_advanced_stats_from_row(row, player.id, season.id)
+                    repo.save_advanced_stats(stats)
+                    summary["players_processed"] += 1
+                    summary["advanced_stats_upserted"] += 1
+                except Exception as e:
+                    summary["errors"] += 1
+                    print(f"Error processing advanced stats for {player_name}: {e}")
+                    session.rollback()
+
+        return summary
+
+
 def main():
     parser = argparse.ArgumentParser(description="NBA historical data backfill")
     parser.add_argument("--seasons", nargs="+", default=["2023-24"], help="Seasons to backfill")
     parser.add_argument("--game-logs", action="store_true", help="Backfill game logs")
     parser.add_argument("--shots", action="store_true", help="Backfill shot charts (slow)")
+    parser.add_argument("--advanced-stats", action="store_true", help="Backfill Basketball Reference advanced stats")
     parser.add_argument("--limit-players", type=int, default=None, help="Limit number of players")
     parser.add_argument("--no-skip-existing", action="store_true", help="Re-process existing data")
     args = parser.parse_args()
 
     skip_existing = not args.no_skip_existing
 
-    if not args.game_logs and not args.shots:
-        print("Use --game-logs and/or --shots")
+    if not args.game_logs and not args.shots and not args.advanced_stats:
+        print("Use --game-logs, --shots and/or --advanced-stats")
         return
 
     if args.game_logs:
@@ -348,6 +400,11 @@ def main():
         print("Starting shot charts backfill...")
         result = backfill_shots(args.seasons, args.limit_players, skip_existing)
         print("\nShots result:", result)
+
+    if args.advanced_stats:
+        print("Starting advanced stats backfill...")
+        result = backfill_advanced_stats(args.seasons, args.limit_players)
+        print("\nAdvanced stats result:", result)
 
 
 if __name__ == "__main__":
