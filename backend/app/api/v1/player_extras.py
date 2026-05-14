@@ -1,12 +1,14 @@
+import os
 import datetime
-from typing import Optional
+from typing import Optional, Union
 from fastapi import APIRouter, HTTPException, Query, Depends
 from starlette.responses import Response, FileResponse
 import requests
 from nba_api.stats.endpoints import commonplayerinfo, shotchartdetail
 from nba_api.stats.static import players as static_players
-from app.schemas import PlayerProfileResponse, PlayerShotsResponse, PlayerShot
-from app.api.deps import get_report_service
+from app.schemas import HistoricalPlayerShotsResponse, PlayerProfileResponse, PlayerShotsResponse, PlayerShot
+from app.api.deps import get_historical_service, get_report_service
+from app.services.historical import HistoricalService
 from app.services.report import ReportService
 
 router = APIRouter()
@@ -83,13 +85,18 @@ def player_profile(player_name: str):
         raise HTTPException(status_code=500, detail=f"Error fetching profile: {e}")
 
 
-@router.get("/player/{player_name}/shots", response_model=PlayerShotsResponse)
+@router.get("/player/{player_name}/shots", response_model=Union[HistoricalPlayerShotsResponse, PlayerShotsResponse])
 def player_shots(
     player_name: str,
     season: Optional[str] = None,
+    season_id: Optional[int] = Query(default=None),
     season_type: str = Query(default="Regular Season"),
+    historical_service: HistoricalService = Depends(get_historical_service),
 ):
     import pandas as pd
+
+    if season_id is not None:
+        return historical_service.get_player_shots(player_name, season_id)
 
     pid = _get_player_id_by_name(player_name)
     if pid is None:

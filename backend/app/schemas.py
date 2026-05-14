@@ -63,6 +63,86 @@ class PlayerShotsResponse(BaseModel):
     shots: List[PlayerShot]
 
 
+class PlayerGameLogItem(BaseModel):
+    game_id: str
+    game_date: Optional[str]
+    matchup: Optional[str]
+    wl: Optional[str]
+    min: int
+    pts: int
+    reb: int
+    ast: int
+    stl: int
+    blk: int
+    plus_minus: int
+
+
+class PlayerGameLogsResponse(BaseModel):
+    player_name: str
+    season_id: int
+    games: List[PlayerGameLogItem]
+
+
+class HistoricalPlayerShotsResponse(BaseModel):
+    player_name: str
+    season_id: int
+    attempts: int
+    makes: int
+    shots: List[PlayerShot]
+
+
+class PlayerAdvancedStatsResponse(BaseModel):
+    player_name: str
+    season_id: int
+    per: Optional[float] = None
+    ts_pct: Optional[float] = None
+    ftr: Optional[float] = None
+    orb_pct: Optional[float] = None
+    drb_pct: Optional[float] = None
+    trb_pct: Optional[float] = None
+    ast_pct: Optional[float] = None
+    stl_pct: Optional[float] = None
+    blk_pct: Optional[float] = None
+    tov_pct: Optional[float] = None
+    usg_pct: Optional[float] = None
+    ows: Optional[float] = None
+    dws: Optional[float] = None
+    ws: Optional[float] = None
+    ws_per_48: Optional[float] = None
+    obpm: Optional[float] = None
+    dbpm: Optional[float] = None
+    bpm: Optional[float] = None
+    vorp: Optional[float] = None
+
+
+class SimilarPlayerItem(BaseModel):
+    player_id: int
+    player_name: str
+    similarity_score: float
+
+
+class PlayerSimilaritiesResponse(BaseModel):
+    player_name: str
+    season_id: int
+    players: List[SimilarPlayerItem]
+
+
+class TeamEloItem(BaseModel):
+    game_id: Optional[str]
+    game_date: Optional[str]
+    opponent_team_id: Optional[int]
+    rating_before: float
+    rating_after: float
+    result: Optional[str]
+    win_probability: Optional[float]
+
+
+class TeamEloResponse(BaseModel):
+    team_abbreviation: str
+    season_id: int
+    timeline: List[TeamEloItem]
+
+
 class PlayerProfileResponse(BaseModel):
     player_id: int
     full_name: str
