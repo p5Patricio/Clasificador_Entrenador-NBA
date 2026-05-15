@@ -1,7 +1,36 @@
-export const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
+const RAW_API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
+
+export const API_ORIGIN = RAW_API_BASE.replace(/\/api\/v1\/?$/, "").replace(/\/$/, "");
+export const API_BASE = `${API_ORIGIN}/api/v1`;
+
+async function getJson<T>(url: string): Promise<T> {
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json() as Promise<T>;
+}
+
+async function postJson<T>(url: string, payload: unknown): Promise<T> {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json() as Promise<T>;
+}
+
+export type HealthResponse = {
+  status: string;
+  db_connected: boolean;
+};
 
 export type Team = {
+  id: number;
   abbreviation: string;
+  full_name: string;
+  city: string;
+  conference: string;
+  division: string;
   players: number;
 };
 
@@ -15,14 +44,9 @@ export type StatDelta = {
 
 export type PlayerAnalysisResponse = {
   player_name: string;
-  player_id?: number | null;
   team?: string | null;
-  cluster_id: number;
-  cluster_role: string;
-  headshot_url?: string | null;
+  cluster_id?: number | null;
   comparison: StatDelta[];
-  weak_areas: string[];
-  projected_stats: Record<string, number>;
 };
 
 export type PlayerProfileResponse = {
@@ -50,8 +74,10 @@ export type PlayerShot = {
 };
 
 export type PlayerShotsResponse = {
-  season: string;
-  season_type: string;
+  season?: string;
+  season_type?: string;
+  player_name?: string;
+  season_id?: number;
   attempts: number;
   makes: number;
   shots: PlayerShot[];
@@ -59,87 +85,130 @@ export type PlayerShotsResponse = {
 
 export type PlayerRadarsResponse = {
   player_name: string;
-  cluster_id: number;
-  cluster_role: string;
-  categories: Array<{
-    name: string;
-    stats: string[];
-    labels: string[];
-    series: {
-      player: number[];
-      cluster_avg: number[];
-      projected: number[];
-    };
+  seasons: Array<{
+    season_id: number;
+    season_label?: string | null;
+    stats: Record<string, number>;
   }>;
 };
 
+export type PlayerGameLogsResponse = {
+  player_name: string;
+  season_id: number;
+  games: Array<{
+    game_id: string;
+    game_date?: string | null;
+    matchup?: string | null;
+    wl?: string | null;
+    min: number;
+    pts: number;
+    reb: number;
+    ast: number;
+    stl: number;
+    blk: number;
+    plus_minus: number;
+  }>;
+};
+
+export type PlayerAdvancedStatsResponse = {
+  player_name: string;
+  season_id: number;
+  per?: number | null;
+  ts_pct?: number | null;
+  usg_pct?: number | null;
+  ws?: number | null;
+  bpm?: number | null;
+  vorp?: number | null;
+};
+
+export type PlayerSimilaritiesResponse = {
+  player_name: string;
+  season_id: number;
+  players: Array<{
+    player_id: number;
+    player_name: string;
+    similarity_score: number;
+  }>;
+};
+
+export type DataUpdateResponse = {
+  season: string;
+  file?: string | null;
+  rows_processed: number;
+  players_inserted: number;
+  players_updated: number;
+  players_failed: number;
+  etl_status: string;
+};
+
 export async function getHealth() {
-  const res = await fetch(`${API_BASE}/health`, { cache: "no-store" });
-  if (!res.ok) throw new Error(`Health error: ${res.status}`);
-  return res.json() as Promise<{ status: string; initialized: boolean }>;
+  return getJson<HealthResponse>(`${API_BASE}/health`);
 }
 
-export async function initCluster(payload: { filepath: string; k: number; stats_columns?: string[] }) {
-  const res = await fetch(`${API_BASE}/cluster/init`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+export async function initCluster(payload: { season_id: number; k: number }) {
+  const qs = new URLSearchParams({
+    season_id: String(payload.season_id),
+    k: String(payload.k),
   });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json() as Promise<{ message: string; k: number; players: number; clusters: number; roles: Record<string, string> }>;
+  return postJson<{ season_id: number; k: number; players: number; clusters: number; roles: Record<string, string> }>(
+    `${API_BASE}/cluster/init?${qs.toString()}`,
+    {},
+  );
 }
 
 export async function getTeams() {
-  const res = await fetch(`${API_BASE}/teams`, { cache: "no-store" });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json() as Promise<Team[]>;
+  return getJson<Team[]>(`${API_BASE}/teams`);
 }
 
-export async function getPlayers(team?: string) {
-  const url = team ? `${API_BASE}/players?team=${encodeURIComponent(team)}` : `${API_BASE}/players`;
-  const res = await fetch(url, { cache: "no-store" });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json() as Promise<string[]>;
+export async function getPlayers(team?: string, seasonId?: number) {
+  const qs = new URLSearchParams();
+  if (team) qs.set("team", team);
+  if (seasonId) qs.set("season_id", String(seasonId));
+  return getJson<string[]>(`${API_BASE}/players${qs.toString() ? `?${qs.toString()}` : ""}`);
 }
 
-export async function getPlayerAnalysis(name: string) {
-  const res = await fetch(`${API_BASE}/player/${encodeURIComponent(name)}/analysis`, { cache: "no-store" });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json() as Promise<PlayerAnalysisResponse>;
+export async function getPlayerAnalysis(name: string, seasonId?: number) {
+  const qs = new URLSearchParams();
+  if (seasonId) qs.set("season_id", String(seasonId));
+  return getJson<PlayerAnalysisResponse>(
+    `${API_BASE}/player/${encodeURIComponent(name)}/analysis${qs.toString() ? `?${qs.toString()}` : ""}`,
+  );
 }
 
-export function getPlayerReportUrl(name: string) {
-  return `${API_BASE}/player/${encodeURIComponent(name)}/report`;
+export function getPlayerReportUrl(name: string, seasonId?: number) {
+  const qs = new URLSearchParams();
+  if (seasonId) qs.set("season_id", String(seasonId));
+  return `${API_BASE}/player/${encodeURIComponent(name)}/report${qs.toString() ? `?${qs.toString()}` : ""}`;
 }
 
-export async function updateDataset(payload: { season?: string; season_type?: string; min_minutes?: number; auto_init?: boolean }) {
-  const res = await fetch(`${API_BASE}/data/update`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json() as Promise<{ message: string; season: string; season_type: string; file: string; initialized: boolean }>;
+export async function updateDataset(payload: { season: string; season_type?: string; min_minutes?: number; filepath?: string }) {
+  return postJson<DataUpdateResponse>(`${API_BASE}/data/update`, payload);
 }
 
 export async function getPlayerProfile(name: string) {
-  const res = await fetch(`${API_BASE}/player/${encodeURIComponent(name)}/profile`, { cache: "no-store" });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json() as Promise<PlayerProfileResponse>;
+  return getJson<PlayerProfileResponse>(`${API_BASE}/player/${encodeURIComponent(name)}/profile`);
 }
 
-export async function getPlayerShots(name: string, season?: string, season_type?: string) {
+export async function getPlayerShots(name: string, seasonId?: number, season?: string, seasonType?: string) {
   const qs = new URLSearchParams();
+  if (seasonId) qs.set("season_id", String(seasonId));
   if (season) qs.set("season", season);
-  if (season_type) qs.set("season_type", season_type);
-  const url = `${API_BASE}/player/${encodeURIComponent(name)}/shots${qs.toString() ? `?${qs.toString()}` : ""}`;
-  const res = await fetch(url, { cache: "no-store" });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json() as Promise<PlayerShotsResponse>;
+  if (seasonType) qs.set("season_type", seasonType);
+  return getJson<PlayerShotsResponse>(`${API_BASE}/player/${encodeURIComponent(name)}/shots${qs.toString() ? `?${qs.toString()}` : ""}`);
 }
 
 export async function getPlayerRadars(name: string) {
-  const res = await fetch(`${API_BASE}/player/${encodeURIComponent(name)}/radars`, { cache: "no-store" });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json() as Promise<PlayerRadarsResponse>;
+  return getJson<PlayerRadarsResponse>(`${API_BASE}/player/${encodeURIComponent(name)}/radars`);
+}
+
+export async function getPlayerGameLogs(name: string, seasonId: number) {
+  return getJson<PlayerGameLogsResponse>(`${API_BASE}/player/${encodeURIComponent(name)}/game-logs?season_id=${seasonId}`);
+}
+
+export async function getPlayerAdvancedStats(name: string, seasonId: number) {
+  return getJson<PlayerAdvancedStatsResponse>(`${API_BASE}/player/${encodeURIComponent(name)}/advanced?season_id=${seasonId}`);
+}
+
+export async function getPlayerSimilarities(name: string, seasonId: number) {
+  return getJson<PlayerSimilaritiesResponse>(`${API_BASE}/player/${encodeURIComponent(name)}/similar?season_id=${seasonId}`);
 }

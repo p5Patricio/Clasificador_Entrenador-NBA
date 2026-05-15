@@ -23,7 +23,8 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const apiDocsHref = `${process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000"}/docs`;
+  const apiOrigin = (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000").replace(/\/api\/v1\/?$/, "").replace(/\/$/, "");
+  const apiDocsHref = `${apiOrigin}/docs`;
   return (
     <html lang="es">
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased bg-gradient-to-b from-black via-slate-950 to-[#0b1020] text-slate-100`}>        
